@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>EBCI 作业平台</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase 官方客户端 SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            apple: {
+              bg: '#F5F5F7',
+              blue: '#0071E3',
+              blueHover: '#0077ED',
+              card: '#FFFFFF',
+              text: '#1D1D1F',
+              subtext: '#86868B',
+              border: 'rgba(0, 0, 0, 0.08)',
+              success: '#34C759',
+              warning: '#FF9500',
+              danger: '#FF3B30'
+            }
+          },
+          fontFamily: {
+            apple: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', '"PingFang SC"', 'sans-serif'],
+            kaiti: ['"KaiTi"', '"STKaiti"', '"Kaiti SC"', 'serif']
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #F5F5F7; color: #1D1D1F; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+    .drawing-canvas { touch-action: none; cursor: crosshair; }
+    @keyframes pulse-subtle { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(0.97); } }
+    .animate-recording { animation: pulse-subtle 1.2s infinite ease-in-out; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-[#0071E3]/20 selection:text-[#0071E3]">
+
+  <!-- 顶部悬浮毛玻璃导航栏 -->
+  <header class="sticky top-0 z-40 w-full bg-white/80 backdrop-blur-xl border-b border-black/[0.06] transition-all">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <!-- 品牌名称：全站统一为 EBCI 作业平台 -->
+      <div class="flex items-center space-x-3 cursor-pointer" onclick="window.app && window.app.navHome()">
+        <div class="w-9 h-9 rounded-2xl bg-[#0071E3] flex items-center justify-center text-white font-bold text-lg shadow-[0_4px_12px_rgba(0,113,227,0.3)]">E</div>
+        <span class="text-xl font-semibold tracking-tight text-[#1D1D1F]">EBCI 作业平台</span>
+      </div>
+
+      <!-- 右侧：Apple 原生分段控制器 -->
+      <div class="flex items-center space-x-4">
+        <div class="bg-[#E8E8ED] p-1 rounded-xl flex items-center text-xs font-medium">
+          <button type="button" id="tab-student" onclick="window.app && window.app.switchPortal('student')" class="px-4 py-1.5 rounded-lg transition-all duration-200 bg-white text-[#1D1D1F] shadow-sm font-semibold">Student Portal</button>
+          <button type="button" id="tab-teacher" onclick="window.app && window.app.switchPortal('teacher')" class="px-4 py-1.5 rounded-lg transition-all duration-200 text-[#86868B] hover:text-[#1D1D1F]">教师管理后台</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 全局主视口 -->
+  <main id="app-viewport" class="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"></main>
+
+  <!-- 全局 Apple 模态工作台 -->
+  <div id="apple-modal-overlay" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 hidden transition-opacity duration-200">
+    <div id="apple-modal-container" class="bg-white rounded-3xl shadow-2xl border border-black/[0.06] w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden transform scale-95 transition-all duration-200">
+      <div class="px-6 sm:px-8 py-5 border-b border-black/[0.06] flex items-center justify-between bg-white/80 backdrop-blur">
+        <div>
+          <h3 id="modal-title" class="text-xl font-bold tracking-tight text-[#1D1D1F]">Title</h3>
+          <p id="modal-subtitle" class="text-xs text-[#86868B] mt-0.5">Subtitle</p>
+        </div>
+        <button type="button" onclick="window.app.closeModal()" class="w-8 h-8 rounded-full bg-[#F5F5F7] hover:bg-[#E8E8ED] flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="modal-body" class="px-6 sm:px-8 py-6 overflow-y-auto flex-1 space-y-6"></div>
+    </div>
+  </div>
+
+  <!-- Toast 提示 -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-16 opacity-0 transition-all duration-300 pointer-events-none px-5 py-3 rounded-2xl shadow-xl text-sm font-medium flex items-center space-x-2 text-white"></div>
+
+  <script>
+    /**
+     * =========================================================================
+     * 1. 专属 Supabase 云端对接凭据
+     * =========================================================================
+     */
+    const SUPABASE_CONFIG = {
+      url: 'https://kndzqhtqormzsbamaowh.supabase.co',
+      anonKey: 'sb_publishable_qqBoF9WD9Asv0GDgmpDiNQ_PqTM9zBn'
+    };
+
+    let sbClient = null;
+    try {
+      if (window.supabase && window.supabase.createClient) {
+        sbClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
+      }
+    } catch (e) {}
+
+    const STORAGE_KEY = 'EBCI_APPLE_DB_V2';
+
+    // 系统底层初始化兜底数据（仅保留一个可被自由修改的主管理员账号）
+    const SEED_DATA = {
+      teachers: [
+        { 
+          id: 't_admin', 
+          username: 'admin', 
+          password: 'ebci2026', 
+          name: '主管理员', 
+          is_admin: true, 
+          assigned_classes: ['HSK1-A', 'BCT-B1'] 
+        }
+      ],
+      classes: [
+        { id: 'c_hsk1', code: 'HSK1-A', name: '商务汉语初级 A 班', teacher_id: 't_admin', created_at: '2026-09-01' },
+        { id: 'c_bct_b1', code: 'BCT-B1', name: '商务汉语中级班', teacher_id: 't_admin', created_at: '2026-09-15' }
+      ],
+      students: [
+        { id: 's_sophia', class_code: 'HSK1-A', name: 'Sophia', pin_code: '1234', created_at: '2026-10-01 10:00' }
+      ],
+      homeworks: [
+        {
+          id: 'hw_demo_1',
+          class_code: 'HSK1-A',
+          title: 'Lesson 1: Business Greetings & Character Tracing',
+          deadline: '2026-11-30T23:59',
+          hanzi_list: '你好谢谢',
+          text_prompt: 'Please translate into Chinese:\n1. Nice to meet you, Mr. Wang.\n2. Thank you for your email.',
+          require_audio: true,
+          audio_prompt: 'Please read aloud with clear tones: "你好，很高兴认识您！谢谢您的合作。"',
+          blocks: [
+            { type: 'text', title: 'Business Etiquette Note', content: 'Exchanging name cards with both hands is customary in Chinese business.' }
+          ],
+          rich_note: 'Pay extra attention to stroke balance and steady pacing.',
+          individual_overrides: {},
+          created_at: '2026-10-02 09:30'
+        }
+      ],
+      submissions: []
+    };
+
+    class EBCIApp {
+      constructor() {
+        this.currentPortal = 'teacher'; // 默认方便直接进入教师管理端测试
+        this.currentStudent = null;
+        this.currentTeacher = null;
+        this.selectedTeacherClass = 'HSK1-A';
+        this.teacherViewTab = 'homeworks';
+        
+        this.canvasEngines = {};
+        this.mediaRecorder = null;
+        this.recordedAudioBase64 = null;
+        this.rawAudioBlob = null;
+        this.recordingTimer = null;
+        this.recordingSeconds = 0;
+        this.tempAttachedName = '';
+        this.isCloudOnline = false;
+
+        this.init();
+      }
+
+      init() {
+        this.ensureSeedData();
+        // 瞬间渲染首屏，绝不卡死
+        this.render();
+        // 后台静默与云端同步
+        setTimeout(() => this.backgroundSync(), 60);
+      }
+
+      ensureSeedData(forceReset = false) {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw || forceReset) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
+            return;
+          }
+          const parsed = JSON.parse(raw);
+          if (!parsed.classes || !parsed.teachers || parsed.teachers.length === 0) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
+          }
+        } catch (e) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_DATA));
+        }
+      }
+
+      getDB() {
+        this.ensureSeedData();
+        return JSON.parse(localStorage.getItem(STORAGE_KEY));
+      }
+
+      saveDB(data) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      }
+
+      async backgroundSync() {
+        if (!sbClient) return;
+        try {
+          const [tRes, cRes, sRes, hRes, subRes] = await Promise.all([
+            sbClient.from('teachers').select('*'),
+            sbClient.from('classes').select('*'),
+            sbClient.from('students').select('*'),
+            sbClient.from('homeworks').select('*'),
+            sbClient.from('submissions').select('*')
+          ]);
+
+          if (cRes && cRes.data) {
+            if (cRes.data.length === 0) {
+              await this.seedCloudDatabase();
+            } else {
+              const cloudDB = {
+                teachers: (tRes.data && tRes.data.length > 0) ? tRes.data : this.getDB().teachers,
+                classes: cRes.data || [],
+                students: sRes.data || [],
+                homeworks: hRes.data || [],
+                submissions: subRes.data || []
+              };
+              this.saveDB(cloudDB);
+            }
+            this.isCloudOnline = true;
+          }
+        } catch (e) {}
+      }
+
+      async seedCloudDatabase() {
+        if (!sbClient) return;
+        try {
+          await sbClient.from('teachers').upsert(SEED_DATA.teachers);
+          await sbClient.from('classes').upsert(SEED_DATA.classes);
+          await sbClient.from('students').upsert(SEED_DATA.students);
+          await sbClient.from('homeworks').upsert(SEED_DATA.homeworks);
+        } catch (err) {}
+      }
+
+      async uploadFileToStorage(bucketName, filePath, blobOrBase64, contentType = 'application/octet-stream') {
+        if (!sbClient) return (typeof blobOrBase64 === 'string' ? blobOrBase64 : '');
+        try {
+          let blob = blobOrBase64;
+          if (typeof blobOrBase64 === 'string' && blobOrBase64.startsWith('data:')) {
+            const arr = blobOrBase64.split(',');
+            const mime = arr[0].match(/:(.*?);/)[1];
+            const bstr = atob(arr[1]);
+            let n = bstr.length;
+            const u8arr = new Uint8Array(n);
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            blob = new Blob([u8arr], { type: mime });
+          }
+
+          const { error } = await sbClient.storage.from(bucketName).upload(filePath, blob, { contentType, upsert: true });
+          if (error) throw error;
+
+          const { data: publicUrlData } = sbClient.storage.from(bucketName).getPublicUrl(filePath);
+          return publicUrlData.publicUrl;
+        } catch (e) {
+          return typeof blobOrBase64 === 'string' ? blobOrBase64 : '';
+        }
+      }
+
+      async syncRecord(tableName, record) {
+        const db = this.getDB();
+        const list = db[tableName] || [];
+        const idx = list.findIndex(item => item.id === record.id);
+        if (idx >= 0) list[idx] = record;
+        else list.unshift(record);
+        db[tableName] = list;
+        this.saveDB(db);
+
+        if (sbClient) {
+          try { await sbClient.from(tableName).upsert(record); } catch (e) {}
+        }
+      }
+
+      showToast(msg, type = 'info') {
+        const toast = document.getElementById('toast');
+        toast.className = 'fixed bottom-6 right-6 z-50 transform transition-all duration-300 px-5 py-3 rounded-2xl shadow-xl text-sm font-medium flex items-center space-x-2 text-white pointer-events-auto ' + 
+          (type === 'success' ? 'bg-[#34C759]' : type === 'error' ? 'bg-[#FF3B30]' : 'bg-[#1D1D1F]');
+        toast.innerHTML = `<span>${msg}</span>`;
+        toast.classList.remove('translate-y-16', 'opacity-0');
+        setTimeout(() => toast.classList.add('translate-y-16', 'opacity-0'), 3000);
+      }
+
+      switchPortal(portal) {
+        this.currentPortal = portal;
+        document.getElementById('tab-student').className = portal === 'student' ? 'px-4 py-1.5 rounded-lg bg-white text-[#1D1D1F] shadow-sm font-semibold' : 'px-4 py-1.5 rounded-lg text-[#86868B]';
+        document.getElementById('tab-teacher').className = portal === 'teacher' ? 'px-4 py-1.5 rounded-lg bg-white text-[#1D1D1F] shadow-sm font-semibold' : 'px-4 py-1.5 rounded-lg text-[#86868B]';
+        this.render();
+      }
+
+      navHome() { this.render(); }
+
+      render() {
+        const viewport = document.getElementById('app-viewport');
+        if (!viewport) return;
+        if (this.currentPortal === 'student') {
+          viewport.innerHTML = !this.currentStudent ? this.renderStudentLoginView() : this.renderStudentPortalView();
+        } else {
+          viewport.innerHTML = !this.currentTeacher ? this.renderTeacherLoginView() : this.renderTeacherAdminView();
+        }
+      }
+
+      /* ==========================================================
+       * 1. 教师端：超管中心与教师全动态 CRUD（主管理员专属特权）
+       * ========================================================== */
+
+      renderAdminTeamView() {
+        const db = this.getDB();
+        const teachers = db.teachers || [];
+
+        return `
+          <div class="bg-white rounded-3xl p-6 sm:p-8 border border-black/[0.06] shadow-sm space-y-6">
+            <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-black/[0.06]">
+              <div>
+                <h3 class="text-xl font-bold tracking-tight text-[#1D1D1F]">⚙️ 教师团队与系统权限中心</h3>
+                <p class="text-xs text-[#86868B] mt-1">共 ${teachers.length} 位在册教师 • 主管理员可动态增改资料、重置密码及分配管辖班级</p>
+              </div>
+
+              <!-- 添加新教师按钮 -->
+              <button type="button" onclick="window.app.openTeacherModal()" 
+                class="px-4 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] active:scale-95 text-white text-xs font-semibold rounded-xl shadow-md flex items-center space-x-1.5 transition-all shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                <span>+ 添加新教师</span>
+              </button>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead>
+                  <tr class="border-b border-black/[0.06] text-[#86868B]">
+                    <th class="py-3 px-4 font-semibold">教师姓名</th>
+                    <th class="py-3 px-4 font-semibold">登录账号</th>
+                    <th class="py-3 px-4 font-semibold">角色权限</th>
+                    <th class="py-3 px-4 font-semibold">负责班级</th>
+                    <th class="py-3 px-4 font-semibold text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-black/[0.04]">
+                  ${teachers.map(t => {
+                    const isSelf = this.currentTeacher && this.currentTeacher.id === t.id;
+                    return `
+                      <tr class="hover:bg-[#F5F5F7]/50 transition-colors">
+                        <td class="py-4 px-4 font-bold text-[#1D1D1F]">
+                          ${t.name}
+                          ${isSelf ? '<span class="ml-1.5 px-2 py-0.5 rounded text-[10px] bg-[#0071E3]/10 text-[#0071E3] font-medium">当前登录</span>' : ''}
+                        </td>
+                        <td class="py-4 px-4 font-mono text-[#0071E3]">${t.username}</td>
+                        <td class="py-4 px-4">
+                          <span class="px-2.5 py-1 rounded-full text-[10px] font-semibold ${t.is_admin ? 'bg-[#34C759]/15 text-[#34C759]' : 'bg-[#0071E3]/10 text-[#0071E3]'}">
+                            ${t.is_admin ? '主管理员' : '任课教师'}
+                          </span>
+                        </td>
+                        <td class="py-4 px-4 text-[#86868B]">
+                          <div class="flex flex-wrap gap-1">
+                            ${(t.assigned_classes && t.assigned_classes.length > 0) ? t.assigned_classes.map(c => `
+                              <span class="px-2 py-0.5 rounded-md bg-[#F5F5F7] border border-black/[0.04] text-[11px] text-[#1D1D1F] font-mono">${c}</span>
+                            `).join('') : '<span class="text-xs text-[#86868B]">全院所有班级</span>'}
+                          </div>
+                        </td>
+                        <td class="py-4 px-4 text-right space-x-2 whitespace-nowrap">
+                          <button type="button" onclick="window.app.openTeacherModal('${t.id}')" 
+                            class="px-2.5 py-1 bg-[#0071E3]/10 hover:bg-[#0071E3]/20 active:scale-95 text-[#0071E3] font-semibold rounded-lg text-xs transition-all">
+                            ✏️ 编辑资料
+                          </button>
+                          ${isSelf ? `
+                            <span class="text-[11px] text-[#86868B] italic px-2 py-1">自登保护</span>
+                          ` : `
+                            <button type="button" onclick="window.app.deleteTeacher('${t.id}')" 
+                              class="px-2.5 py-1 bg-[#FF3B30]/10 hover:bg-[#FF3B30]/20 active:scale-95 text-[#FF3B30] font-semibold rounded-lg text-xs transition-all">
+                              🗑️ 删除
+                            </button>
+                          `}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      // 添加与编辑教师通用模态面板
+      openTeacherModal(teacherId = null) {
+        const db = this.getDB();
+        const teacher = teacherId ? db.teachers.find(t => t.id === teacherId) : null;
+        const isEdit = Boolean(teacher);
+
+        document.getElementById('modal-title').textContent = isEdit ? `编辑教师：${teacher.name}` : '添加新教师';
+        document.getElementById('modal-subtitle').textContent = isEdit ? '更新教师姓名、登录凭证、角色及分配负责班级' : '录入新教师信息并勾选其管辖负责的班级';
+
+        const assigned = teacher?.assigned_classes || [];
+
+        document.getElementById('modal-body').innerHTML = `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] uppercase tracking-wider mb-1.5">教师姓名 *</label>
+              <input type="text" id="modal-tch-name" value="${teacher?.name || ''}" placeholder="如：孙老师、王老师" 
+                class="w-full px-4 py-2.5 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15">
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] uppercase tracking-wider mb-1.5">登录账号 (Username) *</label>
+              <input type="text" id="modal-tch-username" value="${teacher?.username || ''}" placeholder="如：admin、teacher_wang" 
+                class="w-full px-4 py-2.5 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15">
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] uppercase tracking-wider mb-1.5">登录密码 *</label>
+              <input type="text" id="modal-tch-pwd" value="${teacher?.password || '123456'}" placeholder="设置新密码" 
+                class="w-full px-4 py-2.5 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-xs font-semibold focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15">
+            </div>
+
+            <div class="p-3 bg-[#F5F5F7] rounded-xl">
+              <label class="flex items-center space-x-2 text-xs font-semibold text-[#1D1D1F] cursor-pointer">
+                <input type="checkbox" id="modal-tch-isadmin" ${teacher?.is_admin ? 'checked' : ''} class="rounded text-[#0071E3] w-4 h-4">
+                <span>设为主管理员（拥有系统全部设置与教师团队管理特权）</span>
+              </label>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] uppercase tracking-wider mb-1.5">分配负责管辖的班级</label>
+              <div class="space-y-2 max-h-40 overflow-y-auto p-3 bg-[#F5F5F7] rounded-xl border border-black/[0.04]">
+                ${db.classes.map(c => `
+                  <label class="flex items-center space-x-2 text-xs cursor-pointer select-none">
+                    <input type="checkbox" name="modal-assign-cls" value="${c.code}" ${assigned.includes(c.code) ? 'checked' : ''} class="rounded text-[#0071E3] w-3.5 h-3.5">
+                    <span class="font-medium text-[#1D1D1F]">${c.name} (${c.code})</span>
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+
+            <div class="pt-4 border-t border-black/[0.06] flex justify-end space-x-3">
+              <button type="button" onclick="window.app.closeModal()" class="px-5 py-2.5 bg-[#F5F5F7] hover:bg-[#E8E8ED] text-xs font-semibold rounded-xl text-[#86868B]">取消</button>
+              <button type="button" onclick="window.app.saveTeacher('${teacherId || ''}')" class="px-6 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-semibold rounded-xl shadow-md">
+                ${isEdit ? '保存资料' : '确认添加'}
+              </button>
+            </div>
+          </div>
+        `;
+
+        document.getElementById('apple-modal-overlay').classList.remove('hidden');
+      }
+
+      async saveTeacher(teacherId = '') {
+        const name = document.getElementById('modal-tch-name').value.trim();
+        const username = document.getElementById('modal-tch-username').value.trim();
+        const pwd = document.getElementById('modal-tch-pwd').value.trim();
+        const isAdmin = document.getElementById('modal-tch-isadmin').checked;
+
+        const selectedCls = [];
+        document.querySelectorAll('input[name="modal-assign-cls"]:checked').forEach(cb => selectedCls.push(cb.value));
+
+        if (!name || !username || !pwd) {
+          alert('请完整填写教师姓名、登录账号与密码！');
+          return;
+        }
+
+        const db = this.getDB();
+
+        if (teacherId) {
+          // 编辑已有教师
+          const teacher = db.teachers.find(t => t.id === teacherId);
+          if (!teacher) return;
+          
+          // 如果修改了用户名，校验唯一性
+          if (teacher.username !== username && db.teachers.some(t => t.username === username)) {
+            alert('该登录账号已被其他教师占用，请更换！');
+            return;
+          }
+
+          teacher.name = name;
+          teacher.username = username;
+          teacher.password = pwd;
+          teacher.is_admin = isAdmin;
+          teacher.assigned_classes = selectedCls;
+
+          // 若当前登录者正是被修改者，同步更新会话
+          if (this.currentTeacher && this.currentTeacher.id === teacher.id) {
+            this.currentTeacher = { ...teacher };
+          }
+
+          await this.syncRecord('teachers', teacher);
+          this.showToast(`教师 ${name} 的资料已更新！`, 'success');
+        } else {
+          // 添加新教师
+          if (db.teachers.some(t => t.username === username)) {
+            alert('该登录账号已被占用，请使用唯一账号！');
+            return;
+          }
+
+          const newTeacher = {
+            id: 't_' + Date.now(),
+            username,
+            password: pwd,
+            name,
+            is_admin: isAdmin,
+            assigned_classes: selectedCls.length > 0 ? selectedCls : [db.classes[0]?.code || 'HSK1-A']
+          };
+
+          await this.syncRecord('teachers', newTeacher);
+          this.showToast(`已成功添加教师：${name}！`, 'success');
+        }
+
+        this.closeModal();
+        this.render();
+      }
+
+      async deleteTeacher(id) {
+        if (this.currentTeacher && this.currentTeacher.id === id) {
+          alert('操作拦截：禁止删除当前正在登录的自身账号！');
+          return;
+        }
+
+        if (!confirm('确定要注销删除该教师账号吗？此操作不可逆。')) return;
+        const db = this.getDB();
+        db.teachers = db.teachers.filter(t => t.id !== id);
+        this.saveDB(db);
+
+        if (sbClient) {
+          try { await sbClient.from('teachers').delete().eq('id', id); } catch (e) {}
+        }
+        this.showToast('已成功注销该教师账号', 'info');
+        this.render();
+      }
+
+      /* ==========================================================
+       * 2. 教师端登录（纯净卡片，无任何测试通道）
+       * ========================================================== */
+
+      renderTeacherLoginView() {
+        return `
+          <div class="min-h-[75vh] flex items-center justify-center py-10">
+            <div class="w-full max-w-md bg-white/80 backdrop-blur-xl border border-black/[0.06] rounded-3xl p-8 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+              <div class="text-center mb-8">
+                <div class="inline-flex w-14 h-14 rounded-2xl bg-[#0071E3]/10 text-[#0071E3] items-center justify-center mb-4">
+                  <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+                </div>
+                <h2 class="text-2xl font-bold tracking-tight text-[#1D1D1F]">教师与管理员登录</h2>
+                <p class="text-sm text-[#86868B] mt-1.5">欧洲商务孔子学院教务后台</p>
+              </div>
+
+              <div id="teacher-login-alert" class="hidden mb-4 p-3.5 rounded-xl bg-[#FF3B30]/10 text-[#FF3B30] text-xs font-medium border border-[#FF3B30]/20 flex items-center space-x-2">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span id="teacher-alert-msg">错误提示</span>
+              </div>
+
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-xs font-semibold text-[#86868B] uppercase tracking-wider mb-1.5 ml-1">教师账号</label>
+                  <input type="text" id="tch-username" placeholder="请输入教师账号" 
+                    class="w-full px-4 py-3 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-sm font-medium focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15 focus:border-[#0071E3] transition-all">
+                </div>
+
+                <div>
+                  <label class="block text-xs font-semibold text-[#86868B] uppercase tracking-wider mb-1.5 ml-1">登录密码</label>
+                  <input type="password" id="tch-password" placeholder="请输入密码" 
+                    class="w-full px-4 py-3 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-sm font-medium focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15 focus:border-[#0071E3] transition-all">
+                </div>
+
+                <button type="button" id="btn-tch-login" onclick="window.app.teacherLogin()" 
+                  class="w-full py-3.5 bg-[#0071E3] hover:bg-[#0077ED] active:scale-[0.98] text-white font-semibold rounded-xl text-sm shadow-[0_4px_12px_rgba(0,113,227,0.25)] transition-all duration-200">
+                  进入教务后台
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      async teacherLogin() {
+        this.ensureSeedData();
+        const u = (document.getElementById('tch-username')?.value || '').trim();
+        const p = (document.getElementById('tch-password')?.value || '').trim();
+        const alertBox = document.getElementById('teacher-login-alert');
+        const alertMsg = document.getElementById('teacher-alert-msg');
+        const btn = document.getElementById('btn-tch-login');
+
+        if (!u || !p) {
+          alertMsg.textContent = '请输入账号与密码。';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = '验证中...';
+
+        let db = this.getDB();
+        let teacher = db.teachers.find(t => t.username === u && t.password === p);
+
+        // 云端穿透查询（确保新添加的教师在任何全新设备上均可立即登入）
+        if (!teacher && sbClient) {
+          try {
+            const { data } = await sbClient.from('teachers').select('*').eq('username', u).eq('password', p).maybeSingle();
+            if (data) {
+              teacher = data;
+              const idx = db.teachers.findIndex(t => t.id === data.id);
+              if (idx >= 0) db.teachers[idx] = data;
+              else db.teachers.push(data);
+              this.saveDB(db);
+            }
+          } catch (e) {}
+        }
+
+        btn.disabled = false;
+        btn.textContent = '进入教务后台';
+
+        if (!teacher) {
+          alertMsg.textContent = '账号或密码错误，请重试。';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+
+        this.currentTeacher = teacher;
+        const allowedClasses = teacher.is_admin ? db.classes.map(c => c.code) : (teacher.assigned_classes || []);
+        this.selectedTeacherClass = allowedClasses[0] || db.classes[0]?.code || 'HSK1-A';
+        this.teacherViewTab = 'homeworks';
+        this.render();
+      }
+
+      teacherLogout() { this.currentTeacher = null; this.render(); }
+
+      renderTeacherAdminView() {
+        const db = this.getDB();
+        const isSuperAdmin = Boolean(this.currentTeacher.is_admin);
+        const myClasses = db.classes.filter(c => isSuperAdmin || (this.currentTeacher.assigned_classes || []).includes(c.code));
+
+        return `
+          <div class="flex flex-col lg:flex-row gap-8 items-start animate-fadeIn">
+            <!-- 左侧边栏 -->
+            <div class="w-full lg:w-72 bg-white/80 backdrop-blur-xl border border-black/[0.06] rounded-3xl p-5 shadow-sm flex flex-col justify-between shrink-0">
+              <div class="space-y-6">
+                <!-- 教师名片 -->
+                <div class="flex items-center space-x-3 pb-4 border-b border-black/[0.06]">
+                  <div class="w-11 h-11 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center font-bold text-sm shadow-md">${this.currentTeacher.name.substring(0, 1)}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-bold text-[#1D1D1F] truncate">${this.currentTeacher.name}</div>
+                    <div class="text-xs text-[#86868B]">${isSuperAdmin ? '主管理员' : '任课教师'}</div>
+                  </div>
+                  <button type="button" onclick="window.app.teacherLogout()" title="退出登录" class="text-[#86868B] hover:text-[#FF3B30] p-1.5 rounded-lg transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                  </button>
+                </div>
+
+                <!-- 班级空间列表 -->
+                <div>
+                  <div class="flex items-center justify-between mb-3 px-1">
+                    <span class="text-xs font-bold text-[#86868B] uppercase tracking-wider">班级工作空间</span>
+                    <button type="button" onclick="window.app.openCreateClassModal()" class="text-xs font-semibold text-[#0071E3] hover:underline">+ 新建班级</button>
+                  </div>
+                  <div class="space-y-1.5">
+                    ${myClasses.map(cls => `
+                      <button type="button" onclick="window.app.selectTeacherClass('${cls.code}')" class="w-full px-3.5 py-3 rounded-2xl text-left transition-all flex items-center justify-between ${this.selectedTeacherClass === cls.code && this.teacherViewTab !== 'admin_team' ? 'bg-[#0071E3] text-white shadow-md' : 'hover:bg-[#F5F5F7] text-[#1D1D1F]'}">
+                        <div>
+                          <div class="text-xs font-bold">${cls.name}</div>
+                          <div class="text-[11px] opacity-80 mt-0.5">口令: ${cls.code}</div>
+                        </div>
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 主管理员专属入口（严格鉴权） -->
+              ${isSuperAdmin ? `
+                <div class="pt-6 mt-6 border-t border-black/[0.06]">
+                  <button type="button" onclick="window.app.switchTeacherTab('admin_team')" 
+                    class="w-full py-3 px-3.5 rounded-2xl text-xs font-semibold flex items-center justify-between transition-all ${this.teacherViewTab === 'admin_team' ? 'bg-[#1D1D1F] text-white shadow-md' : 'bg-[#F5F5F7] hover:bg-[#E8E8ED] text-[#1D1D1F]'}">
+                    <span>⚙️ 系统与教师管理</span>
+                    <span class="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full">超管</span>
+                  </button>
+                </div>
+              ` : ''}
+            </div>
+
+            <!-- 右侧工作区 -->
+            <div class="flex-1 w-full space-y-6">
+              ${this.teacherViewTab === 'admin_team' ? this.renderAdminTeamView() : this.renderTeacherClassWorkspace()}
+            </div>
+          </div>
+        `;
+      }
+
+      selectTeacherClass(code) {
+        this.selectedTeacherClass = code;
+        this.teacherViewTab = 'homeworks';
+        this.render();
+      }
+
+      switchTeacherTab(tab) {
+        this.teacherViewTab = tab;
+        this.render();
+      }
+
+      renderTeacherClassWorkspace() {
+        const db = this.getDB();
+        const curClass = db.classes.find(c => c.code === this.selectedTeacherClass) || db.classes[0];
+        const classHomeworks = db.homeworks.filter(h => h.class_code === curClass.code);
+        const classStudents = db.students.filter(s => s.class_code === curClass.code);
+
+        return `
+          <div class="space-y-6">
+            <div class="bg-white/80 backdrop-blur-xl border border-black/[0.06] rounded-3xl p-6 sm:p-8 flex items-center justify-between shadow-sm">
+              <div>
+                <h3 class="text-2xl font-bold tracking-tight text-[#1D1D1F]">${curClass.name} <span class="text-sm font-normal text-[#0071E3] font-mono">(${curClass.code})</span></h3>
+                <p class="text-xs text-[#86868B] mt-1">本班学生 ${classStudents.length} 人，已发布作业 ${classHomeworks.length} 份</p>
+              </div>
+              <button type="button" onclick="window.app.openPublishHomeworkModal()" class="px-5 py-2.5 bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-semibold rounded-xl shadow-md">+ 布置新作业</button>
+            </div>
+
+            <div class="space-y-4">
+              ${classHomeworks.map(hw => {
+                const subs = db.submissions.filter(s => s.homework_id === hw.id);
+                return `
+                  <div class="bg-white rounded-3xl p-6 border border-black/[0.06] shadow-sm space-y-4">
+                    <div class="flex justify-between items-center">
+                      <div>
+                        <h4 class="text-lg font-bold text-[#1D1D1F]">${hw.title}</h4>
+                        <p class="text-xs text-[#86868B] mt-1">截止: ${hw.deadline.replace('T', ' ')} • 临摹汉字: <strong class="font-kaiti text-[#1D1D1F]">${hw.hanzi_list || '无'}</strong></p>
+                      </div>
+                      <span class="text-xs font-semibold text-[#0071E3]">已交 ${subs.length} 份</span>
+                    </div>
+
+                    <div class="pt-4 border-t border-black/[0.06]">
+                      ${subs.length === 0 ? `<p class="text-xs text-[#86868B]">暂无提交</p>` : `
+                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                          ${subs.map(sub => `
+                            <div class="p-3.5 bg-[#F5F5F7] rounded-2xl flex items-center justify-between">
+                              <div>
+                                <div class="text-xs font-bold text-[#1D1D1F]">${sub.student_name}</div>
+                                <div class="text-[10px] text-[#86868B]">${sub.submitted_at}</div>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-semibold mt-1 inline-block ${sub.grade ? 'bg-[#34C759]/15 text-[#34C759]' : 'bg-[#FF9500]/15 text-[#FF9500]'}">${sub.grade ? `已批: ${sub.grade}` : '待批阅'}</span>
+                              </div>
+                              <button type="button" onclick="window.app.openGradeModal('${sub.id}')" class="px-3 py-1.5 bg-white text-xs font-semibold rounded-xl text-[#0071E3] shadow-sm">批改</button>
+                            </div>
+                          `).join('')}
+                        </div>
+                      `}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
+      }
+
+      openGradeModal(submissionId) {
+        const db = this.getDB();
+        const sub = db.submissions.find(s => s.id === submissionId);
+        if (!sub) return;
+
+        const modalOverlay = document.getElementById('apple-modal-overlay');
+        document.getElementById('modal-title').textContent = `批阅作业：${sub.student_name}`;
+        document.getElementById('modal-subtitle').textContent = `提交时间：${sub.submitted_at}`;
+
+        const hasValidAudio = Boolean(sub.audio_data && typeof sub.audio_data === 'string' && sub.audio_data.length > 20);
+
+        document.getElementById('modal-body').innerHTML = `
+          <div class="space-y-5">
+            <div>
+              <h5 class="text-xs font-bold text-[#86868B] uppercase mb-2">手写临摹笔迹</h5>
+              ${sub.hanzi_snapshots && sub.hanzi_snapshots.length > 0 ? `
+                <div class="flex flex-wrap gap-3 p-3 bg-[#F5F5F7] rounded-2xl">
+                  ${sub.hanzi_snapshots.map(img => `<img src="${img}" class="w-28 h-28 rounded-xl border bg-white object-contain" />`).join('')}
+                </div>
+              ` : `<div class="p-3 bg-[#F5F5F7] rounded-xl text-xs text-[#86868B]">未提交手写图片</div>`}
+            </div>
+
+            <div>
+              <h5 class="text-xs font-bold text-[#86868B] uppercase mb-2">口语录音回放</h5>
+              ${hasValidAudio ? `
+                <div class="p-3 bg-[#F5F5F7] rounded-2xl flex items-center space-x-3">
+                  <audio controls class="w-full" preload="metadata" src="${sub.audio_data}"></audio>
+                </div>
+              ` : `
+                <div class="p-3 bg-[#F5F5F7] rounded-xl text-xs text-[#86868B]">学生未录制音频</div>
+              `}
+            </div>
+
+            <div>
+              <h5 class="text-xs font-bold text-[#86868B] uppercase mb-2">学生作答文本</h5>
+              <div class="p-3.5 bg-[#F5F5F7] rounded-xl text-xs text-[#1D1D1F] whitespace-pre-wrap">${sub.text_answer || '无'}</div>
+            </div>
+
+            <div class="pt-4 border-t space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-[#86868B] mb-1">评分 (如: A (95))</label>
+                <input type="text" id="grade-input" value="${sub.grade || 'A (95)'}" class="w-full sm:w-60 px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs font-semibold">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-[#86868B] mb-1">教师评语</label>
+                <textarea id="feedback-input" rows="3" placeholder="写下评语..." class="w-full p-3 bg-[#F5F5F7] rounded-xl text-xs">${sub.feedback || ''}</textarea>
+              </div>
+              <div class="flex justify-end space-x-3">
+                <button type="button" onclick="window.app.closeModal()" class="px-5 py-2 bg-[#F5F5F7] text-xs font-semibold rounded-xl text-[#86868B]">取消</button>
+                <button type="button" onclick="window.app.saveGrade('${sub.id}')" class="px-6 py-2 bg-[#0071E3] text-white text-xs font-semibold rounded-xl shadow-md">保存批改</button>
+              </div>
+            </div>
+          </div>
+        `;
+        modalOverlay.classList.remove('hidden');
+      }
+
+      async saveGrade(subId) {
+        const db = this.getDB();
+        const sub = db.submissions.find(s => s.id === subId);
+        if (!sub) return;
+        sub.grade = document.getElementById('grade-input').value.trim();
+        sub.feedback = document.getElementById('feedback-input').value.trim();
+        await this.syncRecord('submissions', sub);
+        this.closeModal();
+        this.showToast('批阅保存成功！', 'success');
+        this.render();
+      }
+
+      openPublishHomeworkModal() {
+        document.getElementById('modal-title').textContent = '布置新作业';
+        document.getElementById('modal-subtitle').textContent = `班级口令：${this.selectedTeacherClass}`;
+        document.getElementById('modal-body').innerHTML = `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">作业标题 *</label>
+              <input type="text" id="new-hw-title" placeholder="如：Lesson 2: Ordering Food" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs font-semibold">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">截止时间 *</label>
+              <input type="datetime-local" id="new-hw-deadline" value="2026-11-20T23:59" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs font-semibold">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">临摹汉字</label>
+              <input type="text" id="new-hw-hanzi" placeholder="如：商务宴请" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-sm font-kaiti">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">朗读语音提示</label>
+              <input type="text" id="new-hw-audio" value="请朗读课文核心商务句型，注意四声发音清晰。" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs">
+            </div>
+            <div class="flex justify-end space-x-3 pt-2">
+              <button type="button" onclick="window.app.closeModal()" class="px-5 py-2 bg-[#F5F5F7] text-xs font-semibold rounded-xl text-[#86868B]">取消</button>
+              <button type="button" onclick="window.app.publishHomework()" class="px-6 py-2 bg-[#0071E3] text-white text-xs font-semibold rounded-xl shadow-md">确认发布</button>
+            </div>
+          </div>
+        `;
+        document.getElementById('apple-modal-overlay').classList.remove('hidden');
+      }
+
+      async publishHomework() {
+        const title = document.getElementById('new-hw-title').value.trim();
+        const deadline = document.getElementById('new-hw-deadline').value;
+        const hanzi = document.getElementById('new-hw-hanzi').value.trim();
+        const audioPrompt = document.getElementById('new-hw-audio').value.trim();
+        if (!title || !deadline) return alert('请填写标题和截止时间');
+
+        const newHw = {
+          id: 'hw_' + Date.now(),
+          class_code: this.selectedTeacherClass,
+          title, deadline, hanzi_list: hanzi, text_prompt: '',
+          require_audio: true, audio_prompt: audioPrompt, blocks: [], rich_note: '', individual_overrides: {},
+          created_at: new Date().toISOString().replace('T', ' ').substring(0, 16)
+        };
+        await this.syncRecord('homeworks', newHw);
+        this.closeModal();
+        this.showToast('新作业发布成功！', 'success');
+        this.render();
+      }
+
+      openCreateClassModal() {
+        document.getElementById('modal-title').textContent = '新建教学班级';
+        document.getElementById('modal-subtitle').textContent = '创建后学生使用口令自主加入';
+        document.getElementById('modal-body').innerHTML = `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">班级名称 *</label>
+              <input type="text" id="new-cls-name" placeholder="如：商务汉语进阶 B2 班" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs font-semibold">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-[#86868B] mb-1">班级口令 (Class Code) *</label>
+              <input type="text" id="new-cls-code" placeholder="如：BCT-B2" class="w-full px-4 py-2 bg-[#F5F5F7] rounded-xl text-xs font-semibold uppercase">
+            </div>
+            <div class="flex justify-end space-x-3 pt-2">
+              <button type="button" onclick="window.app.closeModal()" class="px-5 py-2 bg-[#F5F5F7] text-xs font-semibold rounded-xl text-[#86868B]">取消</button>
+              <button type="button" onclick="window.app.saveNewClass()" class="px-6 py-2 bg-[#0071E3] text-white text-xs font-semibold rounded-xl shadow-md">创建班级</button>
+            </div>
+          </div>
+        `;
+        document.getElementById('apple-modal-overlay').classList.remove('hidden');
+      }
+
+      async saveNewClass() {
+        const name = document.getElementById('new-cls-name').value.trim();
+        const code = document.getElementById('new-cls-code').value.trim().toUpperCase();
+        if (!name || !code) return alert('请完整填写信息');
+
+        const db = this.getDB();
+        const newCls = { id: 'c_' + Date.now(), code, name, teacher_id: this.currentTeacher.id, created_at: new Date().toISOString().substring(0, 10) };
+        if (!this.currentTeacher.assigned_classes) this.currentTeacher.assigned_classes = [];
+        this.currentTeacher.assigned_classes.push(code);
+
+        await this.syncRecord('classes', newCls);
+        await this.syncRecord('teachers', this.currentTeacher);
+
+        this.selectedTeacherClass = code;
+        this.closeModal();
+        this.showToast(`班级 ${name} 创建成功！`, 'success');
+        this.render();
+      }
+
+      /* ==========================================================
+       * 3. 学生端登录（纯净卡片，无任何测试通道）
+       * ========================================================== */
+
+      renderStudentLoginView() {
+        return `
+          <div class="min-h-[75vh] flex items-center justify-center py-10">
+            <div class="w-full max-w-md bg-white/80 backdrop-blur-xl border border-black/[0.06] rounded-3xl p-8 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+              <div class="text-center mb-8">
+                <div class="inline-flex w-14 h-14 rounded-2xl bg-[#0071E3]/10 text-[#0071E3] items-center justify-center mb-4">
+                  <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/></svg>
+                </div>
+                <h2 class="text-2xl font-bold tracking-tight text-[#1D1D1F]">Student Homework Portal</h2>
+                <p class="text-sm text-[#86868B] mt-1.5">Sign in with your class code to access assignments</p>
+              </div>
+
+              <div id="student-login-alert" class="hidden mb-4 p-3.5 rounded-xl bg-[#FF3B30]/10 text-[#FF3B30] text-xs font-medium border border-[#FF3B30]/20 flex items-center space-x-2">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span id="student-alert-msg">Error</span>
+              </div>
+
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-xs font-semibold text-[#86868B] uppercase tracking-wider mb-1.5 ml-1">Class Code</label>
+                  <input type="text" id="stu-class-code" placeholder="e.g. HSK1-A" 
+                    class="w-full px-4 py-3 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-sm font-medium focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15 focus:border-[#0071E3] uppercase transition-all">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-[#86868B] uppercase tracking-wider mb-1.5 ml-1">Your Full Name</label>
+                  <input type="text" id="stu-name" placeholder="e.g. Sophia" 
+                    class="w-full px-4 py-3 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-sm font-medium focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15 focus:border-[#0071E3] transition-all">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-[#86868B] uppercase tracking-wider mb-1.5 ml-1">4-Digit PIN Code</label>
+                  <input type="password" id="stu-pin" maxlength="4" placeholder="4-digit PIN" 
+                    class="w-full px-4 py-3 bg-[#F5F5F7] border border-black/[0.06] rounded-xl text-sm font-medium tracking-widest focus:outline-none focus:ring-4 focus:ring-[#0071E3]/15 focus:border-[#0071E3] transition-all">
+                </div>
+                <button type="button" onclick="window.app.studentLogin()" 
+                  class="w-full py-3.5 bg-[#0071E3] hover:bg-[#0077ED] active:scale-[0.98] text-white font-semibold rounded-xl text-sm shadow-[0_4px_12px_rgba(0,113,227,0.25)] transition-all duration-200">
+                  Continue / Enter Classroom
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      async studentLogin() {
+        this.ensureSeedData();
+        const codeInput = document.getElementById('stu-class-code');
+        const nameInput = document.getElementById('stu-name');
+        const pinInput = document.getElementById('stu-pin');
+        const alertBox = document.getElementById('student-login-alert');
+        const alertMsg = document.getElementById('student-alert-msg');
+
+        const classCode = (codeInput?.value || '').trim().toUpperCase();
+        const studentName = (nameInput?.value || '').trim();
+        const inputPin = String(pinInput?.value || '').trim();
+
+        if (!classCode || !studentName || !inputPin) {
+          alertMsg.textContent = 'Please fill in all 3 fields.';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+
+        const db = this.getDB();
+        let student = db.students.find(s => s.class_code.toUpperCase() === classCode && s.name.toLowerCase() === studentName.toLowerCase());
+        if (!student) {
+          student = { id: 's_' + Date.now(), class_code: classCode, name: studentName, pin_code: inputPin, created_at: new Date().toISOString().substring(0, 16) };
+          await this.syncRecord('students', student);
+          this.showToast(`Welcome! Account created for ${studentName}`, 'success');
+        } else if (String(student.pin_code).trim() !== inputPin) {
+          alertMsg.textContent = 'Incorrect 4-Digit PIN for this student.';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+
+        this.currentStudent = { class_code: classCode, name: student.name };
+        this.render();
+      }
+
+      studentLogout() { this.currentStudent = null; this.render(); }
+
+      renderStudentPortalView() {
+        const db = this.getDB();
+        const hwList = db.homeworks.filter(hw => hw.class_code.toUpperCase() === this.currentStudent.class_code.toUpperCase());
+        const studentSubs = db.submissions.filter(sub => sub.student_name.toLowerCase() === this.currentStudent.name.toLowerCase() && sub.class_code.toUpperCase() === this.currentStudent.class_code.toUpperCase());
+
+        return `
+          <div class="space-y-8 animate-fadeIn">
+            <div class="bg-white/80 backdrop-blur-xl border border-black/[0.06] rounded-3xl p-6 sm:p-8 flex items-center justify-between shadow-sm">
+              <div class="flex items-center space-x-4">
+                <div class="w-14 h-14 rounded-2xl bg-[#0071E3] text-white flex items-center justify-center text-xl font-bold">${this.currentStudent.name.substring(0, 2).toUpperCase()}</div>
+                <div>
+                  <h2 class="text-2xl font-bold tracking-tight text-[#1D1D1F]">Welcome, ${this.currentStudent.name}</h2>
+                  <div class="text-xs text-[#86868B] mt-1">Class: <strong class="text-[#0071E3]">${this.currentStudent.class_code}</strong> • European Business Confucius Institute</div>
+                </div>
+              </div>
+              <button type="button" onclick="window.app.studentLogout()" class="px-4 py-2 bg-[#F5F5F7] text-[#FF3B30] text-xs font-semibold rounded-xl">Sign Out</button>
+            </div>
+
+            <div class="space-y-4">
+              <h3 class="text-lg font-bold tracking-tight text-[#1D1D1F]">Assignments</h3>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                ${hwList.map(hw => {
+                  const sub = studentSubs.find(s => s.homework_id === hw.id);
+                  const isSubmitted = Boolean(sub);
+                  return `
+                    <div class="bg-white rounded-3xl p-6 border border-black/[0.06] shadow-sm flex flex-col justify-between">
+                      <div>
+                        <div class="flex justify-between items-center mb-3">
+                          <span class="px-3 py-1 rounded-full text-xs font-semibold ${sub?.grade ? 'bg-[#34C759]/15 text-[#34C759]' : isSubmitted ? 'bg-[#0071E3]/10 text-[#0071E3]' : 'bg-[#FF9500]/10 text-[#FF9500]'}">
+                            ${sub?.grade ? `● Graded (${sub.grade})` : isSubmitted ? '● Submitted' : '● Pending Submission'}
+                          </span>
+                          <span class="text-xs text-[#86868B]">Due: ${hw.deadline.replace('T', ' ')}</span>
+                        </div>
+                        <h4 class="text-lg font-bold text-[#1D1D1F] mb-2">${hw.title}</h4>
+                        ${sub?.feedback ? `<div class="p-3 bg-[#34C759]/5 border border-[#34C759]/20 rounded-xl text-xs text-[#1D1D1F] mb-3 italic">"Teacher: ${sub.feedback}"</div>` : ''}
+                      </div>
+                      <button type="button" onclick="window.app.openStudentHomeworkModal('${hw.id}')" class="w-full py-3 bg-[#0071E3] hover:bg-[#0077ED] text-white font-semibold rounded-xl text-sm shadow-md transition-all">
+                        ${isSubmitted ? 'View / Resubmit' : 'Open Assignment'}
+                      </button>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      openStudentHomeworkModal(hwId) {
+        const db = this.getDB();
+        const hw = db.homeworks.find(h => h.id === hwId);
+        if (!hw) return;
+
+        const studentName = this.currentStudent.name;
+        const sub = db.submissions.find(s => s.homework_id === hwId && s.student_name.toLowerCase() === studentName.toLowerCase());
+
+        this.canvasEngines = {};
+        this.recordedAudioBase64 = sub?.audio_data || null;
+        this.rawAudioBlob = null;
+
+        const modalOverlay = document.getElementById('apple-modal-overlay');
+        document.getElementById('modal-title').textContent = hw.title;
+        document.getElementById('modal-subtitle').textContent = `Due: ${hw.deadline.replace('T', ' ')}`;
+
+        document.getElementById('modal-body').innerHTML = `
+          <div class="space-y-6">
+            ${hw.hanzi_list ? `
+              <div>
+                <h4 class="text-xs font-bold text-[#86868B] uppercase mb-2">Character Tracing (米字格)</h4>
+                <div class="flex flex-wrap gap-4">
+                  ${hw.hanzi_list.split('').map((char, idx) => `
+                    <div class="flex flex-col items-center space-y-1">
+                      <canvas id="hanzi-canvas-${idx}" width="200" height="200" class="drawing-canvas rounded-2xl border bg-white shadow-sm"></canvas>
+                      <button type="button" onclick="window.app.clearCanvas(${idx})" class="text-[11px] text-[#86868B] hover:text-[#FF3B30]">Clear</button>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            ${hw.require_audio ? `
+              <div class="p-4 bg-[#F5F5F7] rounded-2xl space-y-3">
+                <span class="text-xs font-bold text-[#0071E3] uppercase block">Oral Reading Prompt:</span>
+                <p class="text-sm font-medium text-[#1D1D1F]">${hw.audio_prompt || 'Please record your reading.'}</p>
+                
+                <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                  <div class="flex items-center space-x-3">
+                    <button type="button" id="btn-record-toggle" onclick="window.app.toggleRecording()" class="px-4 py-2 bg-[#FF3B30] text-white text-xs font-semibold rounded-xl flex items-center space-x-1.5">
+                      <span id="record-icon-dot" class="w-2 h-2 rounded-full bg-white"></span>
+                      <span id="record-btn-text">Start Recording</span>
+                    </button>
+                    <span id="recording-timer" class="text-xs font-mono font-semibold text-[#86868B]">00:00</span>
+                  </div>
+                  <div id="audio-playback-container" class="flex-1 max-w-sm w-full ${this.recordedAudioBase64 ? '' : 'hidden'}">
+                    <audio id="student-audio-player" controls class="h-9 w-full" src="${this.recordedAudioBase64 || ''}"></audio>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+
+            <div class="pt-4 border-t flex justify-end space-x-3">
+              <button type="button" onclick="window.app.closeModal()" class="px-5 py-2.5 bg-[#F5F5F7] text-xs font-semibold rounded-xl text-[#86868B]">Cancel</button>
+              <button type="button" id="btn-submit-hw" onclick="window.app.submitStudentHomework('${hw.id}')" class="px-6 py-2.5 bg-[#0071E3] text-white text-xs font-semibold rounded-xl shadow-md">Submit Assignment</button>
+            </div>
+          </div>
+        `;
+        modalOverlay.classList.remove('hidden');
+
+        if (hw.hanzi_list) {
+          setTimeout(() => {
+            hw.hanzi_list.split('').forEach((c, i) => this.initRiceGridCanvas(i, c));
+          }, 40);
+        }
+      }
+
+      closeModal() {
+        if (this.recordingTimer) clearInterval(this.recordingTimer);
+        document.getElementById('apple-modal-overlay').classList.add('hidden');
+      }
+
+      initRiceGridCanvas(idx, char) {
+        const canvas = document.getElementById(`hanzi-canvas-${idx}`);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const size = 200;
+        canvas.width = size;
+        canvas.height = size;
+
+        const drawGrid = () => {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, size, size);
+          ctx.strokeStyle = 'rgba(255, 59, 48, 0.25)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(size / 2, 0); ctx.lineTo(size / 2, size);
+          ctx.moveTo(0, size / 2); ctx.lineTo(size, size / 2);
+          ctx.moveTo(0, 0); ctx.lineTo(size, size);
+          ctx.moveTo(size, 0); ctx.lineTo(0, size);
+          ctx.stroke();
+
+          ctx.font = '130px "KaiTi", "STKaiti", serif';
+          ctx.fillStyle = 'rgba(142, 142, 147, 0.3)';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(char, size / 2, size / 2 + 8);
+        };
+        drawGrid();
+
+        const state = { canvas, ctx, isDrawing: false, drawGrid };
+        this.canvasEngines[idx] = state;
+
+        const startDraw = (e) => {
+          e.preventDefault();
+          state.isDrawing = true;
+          const rect = canvas.getBoundingClientRect();
+          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          ctx.beginPath();
+          ctx.moveTo((clientX - rect.left) * (canvas.width / rect.width), (clientY - rect.top) * (canvas.height / rect.height));
+          ctx.strokeStyle = '#1D1D1F';
+          ctx.lineWidth = 6;
+          ctx.lineCap = 'round';
+        };
+        const drawMove = (e) => {
+          if (!state.isDrawing) return;
+          e.preventDefault();
+          const rect = canvas.getBoundingClientRect();
+          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          ctx.lineTo((clientX - rect.left) * (canvas.width / rect.width), (clientY - rect.top) * (canvas.height / rect.height));
+          ctx.stroke();
+        };
+        const endDraw = () => { if (state.isDrawing) state.isDrawing = false; };
+
+        canvas.addEventListener('mousedown', startDraw);
+        canvas.addEventListener('mousemove', drawMove);
+        window.addEventListener('mouseup', endDraw);
+        canvas.addEventListener('touchstart', startDraw, { passive: false });
+        canvas.addEventListener('touchmove', drawMove, { passive: false });
+        canvas.addEventListener('touchend', endDraw);
+      }
+
+      clearCanvas(idx) {
+        if (this.canvasEngines[idx]) this.canvasEngines[idx].drawGrid();
+      }
+
+      async toggleRecording() {
+        const btnText = document.getElementById('record-btn-text');
+        const iconDot = document.getElementById('record-icon-dot');
+        const timerLabel = document.getElementById('recording-timer');
+        const playbackContainer = document.getElementById('audio-playback-container');
+        const audioPlayer = document.getElementById('student-audio-player');
+
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+          this.mediaRecorder.stop();
+          clearInterval(this.recordingTimer);
+          btnText.textContent = 'Record Again';
+          iconDot.classList.remove('animate-recording');
+          return;
+        }
+
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+                             MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+            this.mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+            
+            const chunks = [];
+            this.recordingSeconds = 0;
+            this.mediaRecorder.ondataavailable = e => chunks.push(e.data);
+            
+            this.mediaRecorder.onstop = () => {
+              const actualMime = this.mediaRecorder.mimeType || 'audio/webm';
+              const blob = new Blob(chunks, { type: actualMime });
+              this.rawAudioBlob = blob;
+
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                this.recordedAudioBase64 = reader.result;
+                audioPlayer.src = this.recordedAudioBase64;
+                playbackContainer.classList.remove('hidden');
+              };
+              reader.readAsDataURL(blob);
+              stream.getTracks().forEach(t => t.stop());
+            };
+
+            this.mediaRecorder.start();
+            btnText.textContent = 'Stop Recording';
+            iconDot.classList.add('animate-recording');
+            this.recordingTimer = setInterval(() => {
+              this.recordingSeconds++;
+              timerLabel.textContent = `${String(Math.floor(this.recordingSeconds / 60)).padStart(2, '0')}:${String(this.recordingSeconds % 60).padStart(2, '0')}`;
+            }, 1000);
+            return;
+          } catch (err) {}
+        }
+
+        btnText.textContent = 'Recording (Simulated)...';
+        iconDot.classList.add('animate-recording');
+        this.recordingSeconds = 0;
+        this.recordingTimer = setInterval(() => {
+          this.recordingSeconds++;
+          timerLabel.textContent = `00:0${this.recordingSeconds}`;
+          if (this.recordingSeconds >= 3) {
+            clearInterval(this.recordingTimer);
+            btnText.textContent = 'Record Again';
+            iconDot.classList.remove('animate-recording');
+            this.recordedAudioBase64 = this.generateSampleWavBase64();
+            audioPlayer.src = this.recordedAudioBase64;
+            playbackContainer.classList.remove('hidden');
+            this.showToast('Sample audio recorded.', 'info');
+          }
+        }, 1000);
+      }
+
+      generateSampleWavBase64() {
+        const sampleRate = 8000;
+        const numSamples = sampleRate * 1.5;
+        const buffer = new ArrayBuffer(44 + numSamples);
+        const view = new DataView(buffer);
+        const writeString = (offset, str) => {
+          for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+        };
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + numSamples, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate, true);
+        view.setUint16(32, 1, true);
+        view.setUint16(34, 8, true);
+        writeString(36, 'data');
+        view.setUint32(40, numSamples, true);
+        for (let i = 0; i < numSamples; i++) {
+          view.setUint8(44 + i, Math.floor(128 + 100 * Math.sin((i / sampleRate) * 440 * 2 * Math.PI)));
+        }
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        return 'data:audio/wav;base64,' + btoa(binary);
+      }
+
+      async submitStudentHomework(hwId) {
+        const submitBtn = document.getElementById('btn-submit-hw');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Saving...';
+
+        const db = this.getDB();
+        const studentName = this.currentStudent.name;
+        const textAnswer = document.getElementById('stu-text-answer')?.value || '';
+
+        const snapshotsUrls = [];
+        const canvasKeys = Object.keys(this.canvasEngines);
+        for (let i = 0; i < canvasKeys.length; i++) {
+          const idx = canvasKeys[i];
+          const base64 = this.canvasEngines[idx].canvas.toDataURL('image/png');
+          const uploadedUrl = await this.uploadFileToStorage('ebci-homework-attachments', `hanzi_${hwId}_${studentName}_${idx}_${Date.now()}.png`, base64, 'image/png');
+          snapshotsUrls.push(uploadedUrl || base64);
+        }
+
+        let safeAudioData = this.recordedAudioBase64 || '';
+        if (this.rawAudioBlob && sbClient) {
+          const mime = this.rawAudioBlob.type || 'audio/webm';
+          const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+          const cloudAudioUrl = await this.uploadFileToStorage('ebci-student-audio', `audio_${hwId}_${studentName}_${Date.now()}.${ext}`, this.rawAudioBlob, mime);
+          if (cloudAudioUrl && cloudAudioUrl.startsWith('http')) {
+            safeAudioData = cloudAudioUrl;
+          }
+        }
+
+        let subIndex = db.submissions.findIndex(s => s.homework_id === hwId && s.student_name.toLowerCase() === studentName.toLowerCase());
+        const subData = {
+          id: subIndex >= 0 ? db.submissions[subIndex].id : 'sub_' + Date.now(),
+          homework_id: hwId,
+          student_name: studentName,
+          class_code: this.currentStudent.class_code,
+          text_answer: textAnswer,
+          hanzi_snapshots: snapshotsUrls.length > 0 ? snapshotsUrls : (subIndex >= 0 ? db.submissions[subIndex].hanzi_snapshots : []),
+          audio_data: safeAudioData,
+          audio_duration: '00:08',
+          grade: subIndex >= 0 ? db.submissions[subIndex].grade : '',
+          feedback: subIndex >= 0 ? db.submissions[subIndex].feedback : '',
+          submitted_at: new Date().toISOString().replace('T', ' ').substring(0, 16),
+          graded_at: subIndex >= 0 ? db.submissions[subIndex].graded_at : ''
+        };
+
+        await this.syncRecord('submissions', subData);
+        this.closeModal();
+        this.showToast('Assignment submitted successfully!', 'success');
+        this.render();
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      window.app = new EBCIApp();
+    });
+  </script>
+</body>
+</html>
