@@ -2772,14 +2772,23 @@
                     <button type="button" onclick="window.app.openCreateClassModal()" class="text-xs font-semibold text-[#0071E3] hover:underline">+ 新建班级</button>
                   </div>
                   <div class="space-y-1.5">
-                    ${myClasses.map(cls => `
-                      <button type="button" onclick="window.app.selectTeacherClass('${cls.code}')" class="w-full px-3.5 py-3 rounded-2xl text-left transition-all flex items-center justify-between ${this.selectedTeacherClass === cls.code && this.teacherViewTab !== 'admin_team' ? 'bg-[#0071E3] text-white shadow-md' : 'hover:bg-[#F5F5F7] text-[#1D1D1F]'}">
-                        <div>
-                          <div class="text-xs font-bold">${cls.name}</div>
-                          <div class="text-[11px] opacity-80 mt-0.5">口令: ${cls.code}</div>
+                    ${myClasses.map(cls => {
+                      const isSelected = this.selectedTeacherClass === cls.code && this.teacherViewTab !== 'admin_team';
+                      return `
+                        <div class="group relative flex items-center">
+                          <button type="button" onclick="window.app.selectTeacherClass('${cls.code}')" class="w-full px-3.5 py-3 rounded-2xl text-left transition-all flex items-center justify-between ${isSelected ? 'bg-[#0071E3] text-white shadow-md' : 'hover:bg-[#F5F5F7] text-[#1D1D1F]'}">
+                            <div class="pr-7 min-w-0">
+                              <div class="text-xs font-bold truncate">${cls.name}</div>
+                              <div class="text-[11px] opacity-80 mt-0.5">口令: ${cls.code}</div>
+                            </div>
+                          </button>
+                          <!-- 鼠标悬停显示删除垃圾桶，点击阻止冒泡 -->
+                          <button type="button" onclick="event.stopPropagation(); window.app.deleteClass('${cls.code}', '${cls.name}')" title="删除该班级" class="absolute right-2.5 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${isSelected ? 'text-white/80 hover:text-white hover:bg-white/20' : 'text-[#86868B] hover:text-[#FF3B30] hover:bg-black/5'}">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                          </button>
                         </div>
-                      </button>
-                    `).join('')}
+                      `;
+                    }).join('')}
                   </div>
                 </div>
               </div>
@@ -3103,7 +3112,47 @@
         this.showToast(`班级 ${name} 创建成功！`, 'success');
         this.render();
       }
+async deleteClass(clsCode, clsName) {
+        if (!confirm(`确定要彻底删除班级【${clsName}】(${clsCode}) 吗？\n\n警告：删除后该班级下的所有学生、作业及提交记录将一并彻底移除，无法撤销！`)) {
+          return;
+        }
 
+        const db = this.getDB();
+        db.classes = (db.classes || []).filter(c => c.code !== clsCode);
+        db.students = (db.students || []).filter(s => s.class_code !== clsCode);
+        db.homeworks = (db.homeworks || []).filter(h => h.class_code !== clsCode);
+        db.submissions = (db.submissions || []).filter(s => s.class_code !== clsCode);
+
+        // 清理教师管辖班级列表
+        (db.teachers || []).forEach(t => {
+          if (t.assigned_classes) {
+            t.assigned_classes = t.assigned_classes.filter(c => c !== clsCode);
+          }
+        });
+        if (this.currentTeacher?.assigned_classes) {
+          this.currentTeacher.assigned_classes = this.currentTeacher.assigned_classes.filter(c => c !== clsCode);
+        }
+
+        this.saveDB(db);
+
+        if (sbClient) {
+          try {
+            await sbClient.from('submissions').delete().eq('class_code', clsCode);
+            await sbClient.from('homeworks').delete().eq('class_code', clsCode);
+            await sbClient.from('students').delete().eq('class_code', clsCode);
+            await sbClient.from('classes').delete().eq('code', clsCode);
+          } catch (e) {}
+        }
+
+        // 如果删除的是当前正选中的班级，自动切换至剩余班级
+        if (this.selectedTeacherClass === clsCode) {
+          const remaining = (db.classes || []).filter(c => this.currentTeacher.is_admin || (this.currentTeacher.assigned_classes || []).includes(c.code));
+          this.selectedTeacherClass = remaining[0]?.code || '';
+        }
+
+        this.showToast(`班级【${clsName}】已删除`, 'info');
+        this.render();
+      }
       /* ==========================================================
        * 模块八：登录与主门户 (学生历史作业抽屉与只读拦截)
        * ========================================================== */
